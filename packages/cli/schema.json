@@ -480,6 +480,54 @@
         }
       }
     },
+    "AppExtensionConfig": {
+      "description": "Configuration for a generic iOS App Extension.\n\nApp extensions are compiled as Swift executables and bundled as .appex bundles in the app's PlugIns folder. Unlike widget extensions, this allows configuring the extension point identifier and linked frameworks.\n\nExample in Dioxus.toml: ```toml [[ios.app_extensions]] source = \"extensions/BackgroundAssetDownloader\" display_name = \"Background Downloader\" bundle_id_suffix = \"background-downloader\" extension_point = \"com.apple.background-asset-download\" frameworks = [\"Foundation\", \"BackgroundAssets\"] module_name = \"BackgroundDownloader\" ```",
+      "type": "object",
+      "required": [
+        "bundle_id_suffix",
+        "display_name",
+        "extension_point",
+        "frameworks",
+        "module_name",
+        "source"
+      ],
+      "properties": {
+        "bundle_id_suffix": {
+          "description": "Bundle ID suffix appended to the app's bundle identifier. For example, if the app is \"com.example.app\" and suffix is \"background-downloader\", the extension bundle ID will be \"com.example.app.background-downloader\".",
+          "type": "string"
+        },
+        "deployment_target": {
+          "description": "Minimum deployment target (e.g., \"16.2\"). Defaults to the app's iOS deployment target if not specified.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "display_name": {
+          "description": "Display name for the extension (shown in system UI).",
+          "type": "string"
+        },
+        "extension_point": {
+          "description": "The NSExtensionPointIdentifier for the extension. For example: \"com.apple.background-asset-download\", \"com.apple.widgetkit-extension\".",
+          "type": "string"
+        },
+        "frameworks": {
+          "description": "Frameworks to link against (e.g., [\"Foundation\", \"BackgroundAssets\"]).",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "module_name": {
+          "description": "Swift module name for the extension.",
+          "type": "string"
+        },
+        "source": {
+          "description": "Path to the Swift package source directory (relative to project root).",
+          "type": "string"
+        }
+      }
+    },
     "ApplicationConfig": {
       "type": "object",
       "properties": {
@@ -926,6 +974,13 @@
       "description": "iOS-specific configuration.\n\nExample: ```toml [ios] deployment_target = \"15.0\" identifier = \"com.example.myapp.ios\"  # Override bundle.identifier for iOS\n\n[ios.entitlements] app-groups = [\"group.com.example.app\"]\n\n[ios.plist] UIBackgroundModes = [\"location\", \"fetch\"] ```",
       "type": "object",
       "properties": {
+        "app_extensions": {
+          "description": "Generic app extensions to compile and bundle. Each entry defines a Swift-based app extension (.appex) that will be compiled and installed into the app's PlugIns folder.\n\nUnlike `widget_extensions` (which defaults to WidgetKit frameworks), this allows specifying the extension point identifier and frameworks.",
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/AppExtensionConfig"
+          }
+        },
         "background_modes": {
           "description": "Additional background modes beyond unified `[background]`. Valid values: \"audio\", \"location\", \"voip\", \"fetch\", \"remote-notification\", \"newsstand-content\", \"external-accessory\", \"bluetooth-central\", \"bluetooth-peripheral\", \"processing\"",
           "type": "array",

@@ -1178,24 +1178,32 @@ impl BuildRequest {
                         .context("Failed to embed Swift standard libraries")?;
                 }
 
-                // Compile and install Apple Widget Extensions from Dioxus.toml config
-                if matches!(self.bundle, BundleFormat::Ios | BundleFormat::MacOS)
-                    && !self.config.ios.widget_extensions.is_empty()
-                {
+                // Compile and install Apple App Extensions from Dioxus.toml config
+                let has_extensions = matches!(self.bundle, BundleFormat::Ios | BundleFormat::MacOS)
+                    && (!self.config.ios.widget_extensions.is_empty()
+                        || !self.config.ios.app_extensions.is_empty());
+                if has_extensions {
                     let names: Vec<_> = self
                         .config
                         .ios
                         .widget_extensions
                         .iter()
                         .map(|w| w.display_name.clone())
+                        .chain(
+                            self.config
+                                .ios
+                                .app_extensions
+                                .iter()
+                                .map(|e| e.display_name.clone()),
+                        )
                         .collect();
                     ctx.status_compiling_native_plugins(format!(
-                        "Widget build: {}",
+                        "Extension build: {}",
                         names.join(", ")
                     ));
-                    self.compile_widget_extensions()
+                    self.compile_app_extensions()
                         .await
-                        .context("Failed to compile widget extensions")?;
+                        .context("Failed to compile app extensions")?;
                 }
 
                 self.optimize(ctx)
@@ -1970,26 +1978,14 @@ impl BuildRequest {
         Ok(())
     }
 
-    /// Compile and install Apple Widget Extensions from Dioxus.toml config.
+    /// Compile and install Apple App Extensions from Dioxus.toml config.
     ///
-    /// This processes widget extensions declared in `[[ios.widget_extensions]]` by:
-    /// 1. Compiling the Swift package as a Widget Extension executable
+    /// This processes extensions declared in `[[ios.widget_extensions]]` and
+    /// `[[ios.app_extensions]]` by:
+    /// 1. Compiling the Swift package as an App Extension executable
     /// 2. Creating the .appex bundle structure with Info.plist
     /// 3. Installing to the app's PlugIns folder
-    async fn compile_widget_extensions(&self) -> Result<()> {
-        let widget_configs = &self.config.ios.widget_extensions;
-        if widget_configs.is_empty() {
-            return Ok(());
-        }
-
-        tracing::debug!(
-            "Compiling {} Apple Widget Extension(s)",
-            widget_configs.len()
-        );
-
-        let build_dir = self.target_dir.join("widget-build");
-        std::fs::create_dir_all(&build_dir)?;
-
+    async fn compile_app_extensions(&self) -> Result<()> {
         let app_bundle_id = self.bundle_identifier();
         let default_deployment_target = self
             .config
@@ -1998,26 +1994,67 @@ impl BuildRequest {
             .as_deref()
             .unwrap_or("16.0");
 
+        let build_dir = self.target_dir.join("extension-build");
+        std::fs::create_dir_all(&build_dir)?;
+
         let plugins_dir = self.plugins_folder();
         std::fs::create_dir_all(&plugins_dir)?;
 
-        for widget_config in widget_configs {
-            let source_path = self.package_manifest_dir().join(&widget_config.source);
-            let deployment_target = widget_config
+        // Collect all extensions: widget_extensions (with defaults) + app_extensions
+        let mut all_extensions: Vec<super::ios_swift::AppExtensionSource> = Vec::new();
+
+        // Widget extensions use WidgetKit defaults for backwards compatibility
+        for wc in &self.config.ios.widget_extensions {
+            let source_path = self.package_manifest_dir().join(&wc.source);
+            let deployment_target = wc
                 .deployment_target
                 .as_deref()
                 .unwrap_or(default_deployment_target);
 
-            let widget_source = super::ios_swift::AppleWidgetSource {
+            all_extensions.push(super::ios_swift::AppExtensionSource {
                 source_path,
-                display_name: widget_config.display_name.clone(),
-                bundle_id_suffix: widget_config.bundle_id_suffix.clone(),
+                display_name: wc.display_name.clone(),
+                bundle_id_suffix: wc.bundle_id_suffix.clone(),
                 deployment_target: deployment_target.to_string(),
-                module_name: widget_config.module_name.clone(),
-            };
+                module_name: wc.module_name.clone(),
+                extension_point: "com.apple.widgetkit-extension".to_string(),
+                frameworks: vec![
+                    "Foundation".to_string(),
+                    "SwiftUI".to_string(),
+                    "WidgetKit".to_string(),
+                    "ActivityKit".to_string(),
+                ],
+                extra_plist_entries: Some(
+                    "    <key>NSSupportsLiveActivities</key>\n    <true/>".to_string(),
+                ),
+            });
+        }
 
-            let appex_path = super::ios_swift::compile_apple_widget(
-                &widget_source,
+        // Generic app extensions use their configured values
+        for ec in &self.config.ios.app_extensions {
+            let source_path = self.package_manifest_dir().join(&ec.source);
+            let deployment_target = ec
+                .deployment_target
+                .as_deref()
+                .unwrap_or(default_deployment_target);
+
+            all_extensions.push(super::ios_swift::AppExtensionSource {
+                source_path,
+                display_name: ec.display_name.clone(),
+                bundle_id_suffix: ec.bundle_id_suffix.clone(),
+                deployment_target: deployment_target.to_string(),
+                module_name: ec.module_name.clone(),
+                extension_point: ec.extension_point.clone(),
+                frameworks: ec.frameworks.clone(),
+                extra_plist_entries: None,
+            });
+        }
+
+        tracing::debug!("Compiling {} Apple App Extension(s)", all_extensions.len());
+
+        for ext_source in &all_extensions {
+            let appex_path = super::ios_swift::compile_app_extension(
+                ext_source,
                 &self.triple,
                 &build_dir,
                 &app_bundle_id,
@@ -2026,8 +2063,8 @@ impl BuildRequest {
             .await
             .with_context(|| {
                 format!(
-                    "Failed to compile widget extension '{}'",
-                    widget_source.display_name
+                    "Failed to compile app extension '{}'",
+                    ext_source.display_name
                 )
             })?;
 
@@ -2035,7 +2072,7 @@ impl BuildRequest {
             let appex_name = appex_path
                 .file_name()
                 .map(|n| n.to_string_lossy().to_string())
-                .unwrap_or_else(|| "Widget.appex".to_string());
+                .unwrap_or_else(|| "Extension.appex".to_string());
             let dest_path = plugins_dir.join(&appex_name);
 
             if dest_path.exists() {
@@ -2045,8 +2082,8 @@ impl BuildRequest {
             self.copy_build_dir_recursive(&appex_path, &dest_path)?;
 
             tracing::debug!(
-                "Installed widget extension '{}' to {}",
-                widget_source.display_name,
+                "Installed app extension '{}' to {}",
+                ext_source.display_name,
                 dest_path.display()
             );
         }
@@ -2316,7 +2353,7 @@ impl BuildRequest {
         }
     }
 
-    /// Get the folder where Apple Widget Extensions (.appex bundles) are installed.
+    /// Get the folder where Apple App Extensions (.appex bundles) are installed.
     /// This is only applicable to iOS and macOS bundles.
     fn plugins_folder(&self) -> PathBuf {
         match self.triple.operating_system {

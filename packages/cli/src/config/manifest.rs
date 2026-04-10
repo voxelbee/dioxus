@@ -380,6 +380,15 @@ pub struct IosConfig {
     /// compiled and installed into the app's PlugIns folder.
     #[serde(default)]
     pub widget_extensions: Vec<WidgetExtensionConfig>,
+
+    /// Generic app extensions to compile and bundle.
+    /// Each entry defines a Swift-based app extension (.appex) that will be
+    /// compiled and installed into the app's PlugIns folder.
+    ///
+    /// Unlike `widget_extensions` (which defaults to WidgetKit frameworks),
+    /// this allows specifying the extension point identifier and frameworks.
+    #[serde(default)]
+    pub app_extensions: Vec<AppExtensionConfig>,
 }
 
 /// Configuration for an iOS Widget Extension.
@@ -417,6 +426,51 @@ pub struct WidgetExtensionConfig {
     /// Swift module name for the widget.
     /// This MUST match the module name used by the main app's Swift plugin
     /// for ActivityKit type matching to work.
+    pub module_name: String,
+}
+
+/// Configuration for a generic iOS App Extension.
+///
+/// App extensions are compiled as Swift executables and bundled as .appex
+/// bundles in the app's PlugIns folder. Unlike widget extensions, this allows
+/// configuring the extension point identifier and linked frameworks.
+///
+/// Example in Dioxus.toml:
+/// ```toml
+/// [[ios.app_extensions]]
+/// source = "extensions/BackgroundAssetDownloader"
+/// display_name = "Background Downloader"
+/// bundle_id_suffix = "background-downloader"
+/// extension_point = "com.apple.background-asset-download"
+/// frameworks = ["Foundation", "BackgroundAssets"]
+/// module_name = "BackgroundDownloader"
+/// ```
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct AppExtensionConfig {
+    /// Path to the Swift package source directory (relative to project root).
+    pub source: String,
+
+    /// Display name for the extension (shown in system UI).
+    pub display_name: String,
+
+    /// Bundle ID suffix appended to the app's bundle identifier.
+    /// For example, if the app is "com.example.app" and suffix is "background-downloader",
+    /// the extension bundle ID will be "com.example.app.background-downloader".
+    pub bundle_id_suffix: String,
+
+    /// The NSExtensionPointIdentifier for the extension.
+    /// For example: "com.apple.background-asset-download", "com.apple.widgetkit-extension".
+    pub extension_point: String,
+
+    /// Frameworks to link against (e.g., ["Foundation", "BackgroundAssets"]).
+    pub frameworks: Vec<String>,
+
+    /// Minimum deployment target (e.g., "16.2").
+    /// Defaults to the app's iOS deployment target if not specified.
+    #[serde(default)]
+    pub deployment_target: Option<String>,
+
+    /// Swift module name for the extension.
     pub module_name: String,
 }
 
